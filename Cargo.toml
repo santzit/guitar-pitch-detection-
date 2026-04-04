@@ -1,0 +1,20 @@
+[package]
+name = "guitar-pitch-detection"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust library for real-time polyphonic guitar pitch detection, designed for Godot game integration"
+license = "GPL-3.0"
+repository = "https://github.com/santzit/guitar-pitch-detection-"
+keywords = ["guitar", "pitch-detection", "audio", "music", "godot"]
+categories = ["multimedia::audio", "science"]
+
+# Build as both a Rust library (rlib) and a C-compatible shared library (cdylib)
+# so it can be loaded directly by Godot via GDExtension.
+[lib]
+name = "guitar_pitch_detection"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+[dev-dependencies]
+approx = "0.5"
