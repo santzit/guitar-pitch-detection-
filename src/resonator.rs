@@ -41,11 +41,17 @@ pub struct ComplexResonator {
     imag: f32,
 }
 
-/// Default forgetting factor — gives ≈ 20 ms effective decay at 44 100 Hz.
+/// Default forgetting factor — gives ≈ 5 ms effective decay at 44 100 Hz and
+/// a ~14 Hz half-power bandwidth, which is narrower than any semitone spacing
+/// across the guitar range (smallest semitone at E2 ≈ 4.9 Hz; see notes.rs).
 ///
-/// Time constant τ = −1 / ln(α) samples.  For α = 0.995, τ ≈ 200 samples.
-/// Energy drops to 1 % after ≈ 920 samples ≈ 20.8 ms at 44 100 Hz.
-pub const DEFAULT_ALPHA: f32 = 0.995;
+/// A narrower bandwidth is essential for reliable polyphonic detection: it
+/// ensures that each sounding note produces a sharp, isolated energy peak and
+/// that adjacent resonators (tuned to neighbouring semitones) do not receive
+/// enough bleed energy to be mistaken for real notes.
+///
+/// Time constant τ = −1 / ln(α) ≈ 1000 samples ≈ 22 ms at 44 100 Hz.
+pub const DEFAULT_ALPHA: f32 = 0.999;
 
 impl ComplexResonator {
     /// Create a new resonator tuned to `frequency` Hz.

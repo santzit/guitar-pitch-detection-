@@ -103,10 +103,12 @@ impl GuitarPitchDetector {
     /// The function:
     /// 1. Feeds every sample through the resonator bank.
     /// 2. Collects resonator energies.
-    /// 3. Selects notes whose energy exceeds `detection_threshold × max_energy`.
-    /// 4. Applies harmonic suppression to reduce octave errors.
-    /// 5. Maps surviving resonators to [`DetectedNote`] structs.
-    /// 6. Runs chord detection on the resulting pitch-class set.
+    /// 3. Keeps only local-maxima resonators (peak-picking) to avoid bleed
+    ///    from adjacent semitones sharing similar energy.
+    /// 4. Selects notes whose peak energy exceeds `detection_threshold × max_energy`.
+    /// 5. Applies harmonic suppression to reduce octave errors.
+    /// 6. Maps surviving resonators to [`DetectedNote`] structs.
+    /// 7. Runs chord detection on the resulting pitch-class set.
     pub fn process(&mut self, samples: &[f32]) -> DetectionResult {
         self.bank.process_samples(samples);
 
@@ -123,11 +125,22 @@ impl GuitarPitchDetector {
 
         let threshold = self.config.detection_threshold * max_energy;
 
-        // Collect (index_in_bank, energy) pairs above the threshold.
+        // Keep only resonators that are local energy maxima: each candidate
+        // must have strictly higher energy than both of its semitone neighbours.
+        // This eliminates the energy "bleed" into adjacent resonators that
+        // occurs when α is close to 1 (wide resonator bandwidth).
+        let n = energies.len();
         let mut candidates: Vec<(usize, f32)> = energies
             .iter()
             .enumerate()
-            .filter(|(_, &e)| e > threshold)
+            .filter(|&(i, &e)| {
+                if e <= threshold {
+                    return false;
+                }
+                let left_ok = i == 0 || e > energies[i - 1];
+                let right_ok = i == n - 1 || e > energies[i + 1];
+                left_ok && right_ok
+            })
             .map(|(i, &e)| (i, e))
             .collect();
 
