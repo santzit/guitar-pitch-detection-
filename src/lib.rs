@@ -18,32 +18,39 @@
 //! |------------------------------|-----------------------------------------|
 //! | Rust application / Godot RS  | [`GuitarPitchDetector`]                 |
 //! | Custom configuration         | [`detector::DetectorConfig`]            |
+//! | Bend / vibrato detection     | [`modulation::ModulationAnalyzer`]      |
+//! | Pitch shift (capo / tuning)  | [`modulation::shift_result`]            |
 //! | C / GDExtension FFI          | [`ffi::gpd_create`] …                   |
 //!
 //! # Example
 //!
 //! ```rust
-//! use guitar_pitch_detection::GuitarPitchDetector;
+//! use guitar_pitch_detection::{GuitarPitchDetector, modulation::shift_result};
 //!
 //! let mut detector = GuitarPitchDetector::new(44_100, 512);
 //! let samples = vec![0.0_f32; 512]; // replace with real PCM data
 //! let result = detector.process(&samples);
 //!
 //! for note in &result.notes {
-//!     println!("{} ({:.1} Hz)", note.name, note.frequency);
+//!     println!("{} ({:.1} Hz) — {:?}", note.name, note.frequency, note.modulation);
 //! }
 //! if let Some(chord) = &result.chord {
 //!     println!("Chord: {}", chord.name);
 //! }
+//!
+//! // Capo on fret 2: shift every detected note down by 2 semitones.
+//! let concert_pitch = shift_result(&result, -2);
 //! ```
 
 pub mod chord;
 pub mod detector;
 pub mod ffi;
+pub mod modulation;
 pub mod notes;
 pub mod resonator;
 pub mod types;
 
 // Re-export the most commonly used items at the crate root.
 pub use detector::{DetectorConfig, GuitarPitchDetector};
-pub use types::{ChordQuality, DetectedChord, DetectedNote, DetectionResult};
+pub use modulation::{shift_result, ModulationAnalyzer, ModulationConfig};
+pub use types::{ChordQuality, DetectedChord, DetectedNote, DetectionResult, PitchModulation};

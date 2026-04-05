@@ -21,7 +21,7 @@
 //! - [`gpd_process`] writes results into a caller-provided [`CDetectionResult`]
 //!   struct — no heap allocation during detection.
 
-use crate::{detector::GuitarPitchDetector, types::ChordQuality};
+use crate::{detector::GuitarPitchDetector, types::{ChordQuality, PitchModulation}};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
@@ -29,7 +29,7 @@ use std::os::raw::{c_char, c_int};
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct CNote {
-    /// Detected frequency in Hz.
+    /// Detected frequency in Hz (sub-semitone accurate).
     pub frequency: f32,
     /// MIDI note number (40 = E2, 69 = A4, …).
     pub midi_note: u8,
@@ -41,6 +41,20 @@ pub struct CNote {
     pub name: [c_char; 8],
     /// Normalized confidence 0.0–1.0.
     pub confidence: f32,
+    /// Pitch modulation type — see `gpd_modulation_*` constants.
+    ///
+    /// * 0 = Stable
+    /// * 1 = Bend
+    /// * 2 = Vibrato
+    pub modulation_type: u8,
+    /// Signed cents deviation from the nominal note frequency.
+    ///
+    /// For `Bend`: the current bend amount (positive = up, negative = down).
+    /// For `Vibrato`: the half peak-to-peak oscillation depth (always ≥ 0).
+    /// For `Stable`: always 0.0.
+    pub modulation_cents: f32,
+    /// Estimated vibrato rate in Hz, or 0.0 if not vibrato.
+    pub modulation_rate_hz: f32,
 }
 
 impl Default for CNote {
@@ -52,6 +66,9 @@ impl Default for CNote {
             octave: 0,
             name: [0; 8],
             confidence: 0.0,
+            modulation_type: 0,
+            modulation_cents: 0.0,
+            modulation_rate_hz: 0.0,
         }
     }
 }
@@ -102,6 +119,17 @@ pub mod chord_quality_code {
     pub const SUS2: u8 = 7;
     pub const SUS4: u8 = 8;
     pub const POWER: u8 = 9;
+}
+
+/// Modulation type integer codes used in [`CNote::modulation_type`].
+pub mod modulation_code {
+    /// No significant pitch deviation.
+    pub const STABLE: u8 = 0;
+    /// String bend — see `CNote::modulation_cents` for the signed deviation.
+    pub const BEND: u8 = 1;
+    /// Vibrato — see `CNote::modulation_cents` for depth and
+    /// `CNote::modulation_rate_hz` for rate.
+    pub const VIBRATO: u8 = 2;
 }
 
 fn quality_to_code(q: &ChordQuality) -> u8 {
@@ -210,6 +238,23 @@ pub unsafe extern "C" fn gpd_process(
         out.notes[i].octave = note.octave;
         out.notes[i].confidence = note.confidence;
         str_to_c_buf(note.name, &mut out.notes[i].name);
+        match &note.modulation {
+            PitchModulation::Stable => {
+                out.notes[i].modulation_type = modulation_code::STABLE;
+                out.notes[i].modulation_cents = 0.0;
+                out.notes[i].modulation_rate_hz = 0.0;
+            }
+            PitchModulation::Bend { cents } => {
+                out.notes[i].modulation_type = modulation_code::BEND;
+                out.notes[i].modulation_cents = *cents;
+                out.notes[i].modulation_rate_hz = 0.0;
+            }
+            PitchModulation::Vibrato { depth_cents, rate_hz } => {
+                out.notes[i].modulation_type = modulation_code::VIBRATO;
+                out.notes[i].modulation_cents = *depth_cents;
+                out.notes[i].modulation_rate_hz = *rate_hz;
+            }
+        }
     }
 
     if let Some(chord) = &detection.chord {

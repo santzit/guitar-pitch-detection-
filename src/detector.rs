@@ -23,9 +23,10 @@
 
 use crate::{
     chord::detect_chord,
+    modulation::{ModulationAnalyzer, ModulationConfig},
     notes::{midi_to_freq, note_name, octave, pitch_class, MAX_MIDI, MIN_MIDI},
     resonator::{ResonatorBank, DEFAULT_ALPHA},
-    types::{DetectedNote, DetectionResult},
+    types::{DetectedNote, DetectionResult, PitchModulation},
 };
 
 /// Configuration used to construct a [`GuitarPitchDetector`].
@@ -47,6 +48,11 @@ pub struct DetectorConfig {
     /// Maximum number of notes returned per frame.  Guitar has 6 strings, so
     /// 6 is a reasonable ceiling.  Default: 6.
     pub max_polyphony: usize,
+    /// Configuration for the built-in pitch modulation analyser (bend /
+    /// vibrato detection).  The `frames_per_second` field is automatically
+    /// overridden to `sample_rate / frame_size` when the detector is
+    /// constructed via [`GuitarPitchDetector::new`].
+    pub modulation: ModulationConfig,
 }
 
 impl Default for DetectorConfig {
@@ -58,6 +64,7 @@ impl Default for DetectorConfig {
             alpha: DEFAULT_ALPHA,
             detection_threshold: 0.15,
             max_polyphony: 6,
+            modulation: ModulationConfig::default(),
         }
     }
 }
@@ -67,21 +74,35 @@ impl Default for DetectorConfig {
 /// Feed consecutive audio frames to [`process`](GuitarPitchDetector::process);
 /// the detector maintains resonator state between calls so that notes which
 /// span multiple frames are tracked correctly.
+///
+/// Bend and vibrato classification is performed automatically: the `modulation`
+/// field of each [`DetectedNote`] in the returned [`DetectionResult`] is
+/// populated on every call.
 #[derive(Debug)]
 pub struct GuitarPitchDetector {
     bank: ResonatorBank,
     config: DetectorConfig,
+    modulation: ModulationAnalyzer,
 }
 
 impl GuitarPitchDetector {
     /// Create a detector with default settings for the given sample rate and
     /// frame size.
     ///
-    /// `frame_size` is only used for documentation / planning purposes here;
-    /// the detector accepts frames of any size in [`process`].
-    pub fn new(sample_rate: u32, _frame_size: usize) -> Self {
+    /// `frame_size` is used to compute the vibrato-rate estimation frame rate
+    /// stored in the modulation configuration.
+    pub fn new(sample_rate: u32, frame_size: usize) -> Self {
+        let fps = if frame_size > 0 {
+            sample_rate as f32 / frame_size as f32
+        } else {
+            ModulationConfig::default().frames_per_second
+        };
         let config = DetectorConfig {
             sample_rate,
+            modulation: ModulationConfig {
+                frames_per_second: fps,
+                ..ModulationConfig::default()
+            },
             ..Default::default()
         };
         Self::with_config(config)
@@ -95,7 +116,12 @@ impl GuitarPitchDetector {
             config.sample_rate as f32,
             config.alpha,
         );
-        Self { bank, config }
+        let modulation = ModulationAnalyzer::new(config.modulation.clone());
+        Self {
+            bank,
+            config,
+            modulation,
+        }
     }
 
     /// Process a frame of mono PCM samples (f32, normalized to −1.0 … 1.0).
@@ -107,8 +133,11 @@ impl GuitarPitchDetector {
     ///    from adjacent semitones sharing similar energy.
     /// 4. Selects notes whose peak energy exceeds `detection_threshold × max_energy`.
     /// 5. Applies harmonic suppression to reduce octave errors.
-    /// 6. Maps surviving resonators to [`DetectedNote`] structs.
-    /// 7. Runs chord detection on the resulting pitch-class set.
+    /// 6. Refines each peak frequency using parabolic interpolation of the
+    ///    three-resonator neighbourhood (sub-semitone accuracy).
+    /// 7. Maps surviving resonators to [`DetectedNote`] structs.
+    /// 8. Classifies the pitch modulation (bend / vibrato) for each note.
+    /// 9. Runs chord detection on the resulting pitch-class set.
     pub fn process(&mut self, samples: &[f32]) -> DetectionResult {
         self.bank.process_samples(samples);
 
@@ -175,14 +204,37 @@ impl GuitarPitchDetector {
             })
             .collect();
 
-        // Build the final note list.
-        let notes: Vec<DetectedNote> = candidates
+        // Build the final note list, refining frequency with parabolic
+        // interpolation so that bends and vibrato within ±50 cents of a
+        // semitone boundary are captured accurately.
+        let mut notes: Vec<DetectedNote> = candidates
             .iter()
             .zip(suppressed.iter())
             .filter(|(_, &s)| !s)
             .map(|((i, e), _)| {
                 let midi = self.bank.resonators[*i].midi_note;
-                let freq = midi_to_freq(midi);
+
+                // Parabolic interpolation: fit a parabola to the energy of
+                // this resonator and its immediate neighbours to find the
+                // true spectral peak within ±0.5 semitones.
+                let cents_offset = if *i > 0 && *i < n - 1 {
+                    let el = energies[i - 1];
+                    let ec = energies[*i];
+                    let er = energies[i + 1];
+                    let denom = el - 2.0 * ec + er;
+                    if denom.abs() > 1e-20 {
+                        let offset = 0.5 * (el - er) / denom; // semitones
+                        offset.clamp(-0.5, 0.5) * 100.0 // → cents
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.0
+                };
+
+                let nominal_freq = midi_to_freq(midi);
+                let freq = nominal_freq * 2.0_f32.powf(cents_offset / 1200.0);
+
                 DetectedNote {
                     frequency: freq,
                     midi_note: midi,
@@ -190,9 +242,13 @@ impl GuitarPitchDetector {
                     octave: octave(midi),
                     name: note_name(midi),
                     confidence: e / max_energy,
+                    modulation: PitchModulation::Stable,
                 }
             })
             .collect();
+
+        // Classify bend / vibrato for each note using the running history.
+        self.modulation.update(&mut notes);
 
         // Chord detection.
         let pitch_classes: Vec<u8> = notes.iter().map(|n| n.semitone).collect();
@@ -204,9 +260,11 @@ impl GuitarPitchDetector {
     /// Reset all resonator states (silence the detector).
     ///
     /// Call this between songs or after a long pause to avoid old note energy
-    /// bleeding into the next detection window.
+    /// bleeding into the next detection window.  Also resets the pitch
+    /// modulation history so bend / vibrato classification starts fresh.
     pub fn reset(&mut self) {
         self.bank.reset();
+        self.modulation.reset();
     }
 
     /// Return the detector configuration.

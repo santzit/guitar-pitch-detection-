@@ -1,9 +1,41 @@
 //! Core public types returned by the guitar pitch detector.
 
+/// Pitch modulation technique detected on a note.
+///
+/// The detector tracks the per-note frequency history and classifies one of:
+/// * [`PitchModulation::Bend`]    — sustained rise or fall from the nominal pitch.
+/// * [`PitchModulation::Vibrato`] — rapid oscillation around the nominal pitch.
+/// * [`PitchModulation::Stable`]  — no significant modulation.
+///
+/// Use [`crate::modulation::ModulationAnalyzer`] to populate this field after
+/// each [`crate::GuitarPitchDetector::process`] call.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum PitchModulation {
+    /// No significant pitch deviation detected.
+    #[default]
+    Stable,
+    /// String bend: pitch is deviating from the nominal MIDI-note frequency.
+    ///
+    /// Positive `cents` = upward bend (pitch is sharp); negative = downward.
+    /// 100 cents equals one semitone.
+    Bend {
+        /// Signed deviation from the nominal note frequency in cents.
+        cents: f32,
+    },
+    /// Vibrato: pitch oscillates periodically around the nominal note.
+    Vibrato {
+        /// Half the peak-to-peak oscillation depth in cents (always ≥ 0).
+        depth_cents: f32,
+        /// Estimated oscillation rate in Hz.
+        rate_hz: f32,
+    },
+}
+
 /// A single musical note detected in the audio signal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DetectedNote {
-    /// Detected frequency in Hz.
+    /// Detected frequency in Hz (sub-semitone accurate via parabolic
+    /// interpolation of resonator energies).
     pub frequency: f32,
     /// MIDI note number (40 = E2, 69 = A4, …).
     pub midi_note: u8,
@@ -15,6 +47,11 @@ pub struct DetectedNote {
     pub name: &'static str,
     /// Normalized confidence 0.0–1.0 (fraction of maximum resonator energy).
     pub confidence: f32,
+    /// Pitch modulation technique applied to this note.
+    ///
+    /// Populated by [`crate::modulation::ModulationAnalyzer::update`]; defaults
+    /// to [`PitchModulation::Stable`] when the analyser is not used.
+    pub modulation: PitchModulation,
 }
 
 /// Quality (type) of a detected chord.
