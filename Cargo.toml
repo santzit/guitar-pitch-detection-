@@ -1,8 +1,8 @@
 [package]
 name = "guitar-pitch-detection"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "A Rust library for real-time polyphonic guitar pitch detection, designed for Godot game integration"
+description = "Real-time polyphonic guitar pitch detection using cycfi/q, cpal audio I/O and dasp DSP"
 license = "GPL-3.0"
 repository = "https://github.com/santzit/guitar-pitch-detection-"
 keywords = ["guitar", "pitch-detection", "audio", "music", "godot"]
@@ -14,7 +14,37 @@ categories = ["multimedia::audio", "science"]
 name = "guitar_pitch_detection"
 crate-type = ["cdylib", "rlib"]
 
-[dependencies]
+# ── Optional features ──────────────────────────────────────────────────────────
+[features]
+default = []
+## Enable real-time audio capture (microphone, Real Tone Cable, USB audio) and
+## high-quality audio file decoding (WAV, OGG, MP3, FLAC).
+## Requires ALSA headers on Linux (`libasound2-dev`) and CoreAudio on macOS.
+audio_input = ["dep:rodio", "dep:cpal"]
 
+# ── Runtime dependencies ───────────────────────────────────────────────────────
+[dependencies]
+## Digital Audio Signal Processing — sample-format conversions (i16/f32/…).
+## Pure Rust, no system dependencies.
+dasp_sample = "0.11"
+
+## Unified audio I/O library built on top of cpal.
+## * WAV / OGG / MP3 / FLAC decoding via rodio::Decoder (symphonia backend).
+## * Live audio capture (Rocksmith Real Tone Cable, USB audio, microphone)
+##   is handled by cpal — the same library rodio uses internally.
+## Only compiled when the `audio_input` feature is enabled.
+rodio = { version = "0.22", optional = true, features = ["wav", "flac", "mp3", "vorbis", "recording"] }
+
+## Cross-platform low-level audio I/O (used for live capture).
+## rodio 0.22 depends on cpal 0.17; we declare it explicitly so we can
+## import cpal types directly in audio_input.rs.
+cpal = { version = "0.17", optional = true }
+
+# ── Dev dependencies ───────────────────────────────────────────────────────────
 [dev-dependencies]
 approx = "0.5"
+
+# ── Build dependencies ─────────────────────────────────────────────────────────
+[build-dependencies]
+## Compiles the cycfi/q C++ pitch-detector wrapper (vendor/q).
+cc = "1.2"

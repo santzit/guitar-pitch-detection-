@@ -24,7 +24,9 @@
 use crate::{
     chord::detect_chord,
     notes::{midi_to_freq, note_name, octave, pitch_class, MAX_MIDI, MIN_MIDI},
+    q_pitch::QPitchDetector,
     resonator::{ResonatorBank, DEFAULT_ALPHA},
+    techniques::TechniqueDetector,
     types::{DetectedNote, DetectionResult},
 };
 
@@ -64,6 +66,17 @@ impl Default for DetectorConfig {
 
 /// Real-time polyphonic guitar pitch detector.
 ///
+/// Combines two pitch-detection layers:
+///
+/// 1. **cycfi/q** ([`QPitchDetector`]) — high-accuracy monophonic pitch
+///    detection using the Binary Autocorrelation Function (BACF) algorithm.
+///    Q's continuous frequency output drives technique detection (bends,
+///    slides, vibrato, palm mutes).
+///
+/// 2. **Resonator bank** ([`ResonatorBank`]) — complex IIR resonators tuned
+///    to every semitone in the guitar range.  Provides polyphonic peak-picking
+///    for simultaneous multi-note (chord) detection.
+///
 /// Feed consecutive audio frames to [`process`](GuitarPitchDetector::process);
 /// the detector maintains resonator state between calls so that notes which
 /// span multiple frames are tracked correctly.
@@ -71,56 +84,84 @@ impl Default for DetectorConfig {
 pub struct GuitarPitchDetector {
     bank: ResonatorBank,
     config: DetectorConfig,
+    /// cycfi/q pitch detector — drives technique analysis.
+    q_detector: QPitchDetector,
+    /// Analyses Q's pitch history to recognise guitar techniques.
+    technique_detector: TechniqueDetector,
 }
 
 impl GuitarPitchDetector {
     /// Create a detector with default settings for the given sample rate and
     /// frame size.
     ///
-    /// `frame_size` is only used for documentation / planning purposes here;
-    /// the detector accepts frames of any size in [`process`].
-    pub fn new(sample_rate: u32, _frame_size: usize) -> Self {
+    /// `frame_size` controls the granularity of technique detection (smaller
+    /// frames → finer time resolution for bend / vibrato analysis).
+    pub fn new(sample_rate: u32, frame_size: usize) -> Self {
         let config = DetectorConfig {
             sample_rate,
             ..Default::default()
         };
-        Self::with_config(config)
+        Self::with_config_and_frame_size(config, frame_size)
     }
 
     /// Create a detector with a fully customised [`DetectorConfig`].
     pub fn with_config(config: DetectorConfig) -> Self {
+        Self::with_config_and_frame_size(config, 512)
+    }
+
+    /// Create a detector with a fully customised [`DetectorConfig`] and explicit frame size.
+    pub fn with_config_and_frame_size(config: DetectorConfig, frame_size: usize) -> Self {
         let bank = ResonatorBank::new(
             config.min_midi,
             config.max_midi,
             config.sample_rate as f32,
             config.alpha,
         );
-        Self { bank, config }
+        let q_detector = QPitchDetector::new_guitar(config.sample_rate as f32);
+        let technique_detector = TechniqueDetector::new(config.sample_rate, frame_size);
+        Self {
+            bank,
+            config,
+            q_detector,
+            technique_detector,
+        }
     }
 
     /// Process a frame of mono PCM samples (f32, normalized to −1.0 … 1.0).
     ///
-    /// The function:
-    /// 1. Feeds every sample through the resonator bank.
-    /// 2. Collects resonator energies.
-    /// 3. Keeps only local-maxima resonators (peak-picking) to avoid bleed
-    ///    from adjacent semitones sharing similar energy.
-    /// 4. Selects notes whose peak energy exceeds `detection_threshold × max_energy`.
-    /// 5. Applies harmonic suppression to reduce octave errors.
-    /// 6. Maps surviving resonators to [`DetectedNote`] structs.
-    /// 7. Runs chord detection on the resulting pitch-class set.
+    /// Runs two parallel detection layers:
+    ///
+    /// 1. **cycfi/q** (`QPitchDetector`) — processes every sample to maintain
+    ///    an accurate, continuous pitch estimate.  Q's frequency and periodicity
+    ///    outputs are fed into the `TechniqueDetector` to identify bends,
+    ///    slides, and vibrato.
+    ///
+    /// 2. **Resonator bank** — provides polyphonic peak-picking for chord
+    ///    detection across all 53 semitones of the guitar range.
     pub fn process(&mut self, samples: &[f32]) -> DetectionResult {
+        // ── Layer 1: Q pitch detector (monophonic, high-accuracy) ─────────────
+        for &s in samples {
+            self.q_detector.process(s);
+        }
+        let q_freq = self.q_detector.frequency();
+        let q_periodicity = self.q_detector.periodicity();
+
+        // Update technique history with Q's latest reading.
+        self.technique_detector.push(q_freq, q_periodicity);
+        let techniques = self.technique_detector.detect();
+
+        // ── Layer 2: resonator bank (polyphonic) ──────────────────────────────
         self.bank.process_samples(samples);
 
         let energies = self.bank.energies();
-        let max_energy = energies
-            .iter()
-            .cloned()
-            .fold(0.0_f32, f32::max);
+        let max_energy = energies.iter().cloned().fold(0.0_f32, f32::max);
 
         // Return early if the signal is essentially silent.
         if max_energy < 1e-10 {
-            return DetectionResult::default();
+            return DetectionResult {
+                techniques,
+                ..Default::default()
+            };
         }
 
         let threshold = self.config.detection_threshold * max_energy;
@@ -198,15 +239,17 @@ impl GuitarPitchDetector {
         let pitch_classes: Vec<u8> = notes.iter().map(|n| n.semitone).collect();
         let chord = detect_chord(&pitch_classes);
 
-        DetectionResult { notes, chord }
+        DetectionResult { notes, chord, techniques }
     }
 
-    /// Reset all resonator states (silence the detector).
+    /// Reset all internal state (silence the detector).
     ///
     /// Call this between songs or after a long pause to avoid old note energy
-    /// bleeding into the next detection window.
+    /// and pitch history bleeding into the next detection window.
     pub fn reset(&mut self) {
         self.bank.reset();
+        self.q_detector.reset();
+        self.technique_detector.reset();
     }
 
     /// Return the detector configuration.
