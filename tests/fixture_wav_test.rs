@@ -8,6 +8,9 @@
 //!
 //! If the fixture does not exist, this test prints a skip notice and exits
 //! successfully (so CI still passes without the dataset).
+//!
+//! All tests print a structured line per check:
+//! `[  N ms] Expected: <X>  |  Detected: <Y>  –  OK / FAILED`
 
 use guitar_pitch_detection::GuitarPitchDetector;
 use std::path::Path;
@@ -17,7 +20,7 @@ use std::path::Path;
 /// Maximum allowed fixture duration: 3 minutes + 1-second tolerance.
 const MAX_FIXTURE_DURATION_SECONDS: f32 = 181.0;
 
-// ── Helpers (mirrors decode_wav_i16 from dataset_tests.rs) ───────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Decode a 16-bit PCM WAV byte slice into mono f32 samples.
 ///
@@ -82,6 +85,21 @@ fn decode_wav_i16(wav: &[u8]) -> (Vec<f32>, u32) {
     (samples, sample_rate)
 }
 
+/// Print one verbose check line.
+///
+/// ```text
+/// [180000.0 ms] Expected: ≥1 note detected in fixture  |  Detected: E2 at 11.6 ms  –  OK
+/// ```
+fn check(time_ms: f32, expected: &str, detected: &str, passed: bool) {
+    println!(
+        "[{:9.1} ms] Expected: {:<50}  |  Detected: {}  –  {}",
+        time_ms,
+        expected,
+        detected,
+        if passed { "OK" } else { "FAILED" }
+    );
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 /// Run the detector over every frame of the test-fixture WAV and assert that
@@ -110,33 +128,55 @@ fn fixture_wav_detects_notes() {
 
     let mut total_frames = 0usize;
     let mut frames_with_notes = 0usize;
-    let mut first_note: Option<String> = None;
+    let mut first_note_ms: Option<f32> = None;
+    let mut first_note_str = String::new();
 
-    for chunk in samples.chunks(frame_size) {
+    for (frame_idx, chunk) in samples.chunks(frame_size).enumerate() {
+        let frame_ms = frame_idx as f32 * frame_size as f32 * 1_000.0 / sr as f32;
         let result = detector.process(chunk);
         total_frames += 1;
 
         if !result.notes.is_empty() {
             frames_with_notes += 1;
-            if first_note.is_none() {
+            if first_note_ms.is_none() {
                 let n = &result.notes[0];
-                first_note = Some(format!(
-                    "{} ({:.1} Hz, confidence {:.2})",
-                    n.name, n.frequency, n.confidence
-                ));
+                first_note_ms = Some(frame_ms);
+                first_note_str = format!(
+                    "{} (MIDI {}, {:.1} Hz, conf {:.2})",
+                    n.name, n.midi_note, n.frequency, n.confidence
+                );
             }
         }
     }
 
+    let total_ms = samples.len() as f32 * 1_000.0 / sr as f32;
+    let det_ratio = 100.0 * frames_with_notes as f32 / total_frames.max(1) as f32;
+
+    // Print summary stats
     println!(
-        "test_fixture.wav: {} frames total, {} frames with notes ({:.1}%)",
-        total_frames,
-        frames_with_notes,
-        100.0 * frames_with_notes as f32 / total_frames.max(1) as f32
+        "\ntest_fixture.wav: {} frames total, {} frames with notes ({:.1}%)",
+        total_frames, frames_with_notes, det_ratio
     );
-    if let Some(note) = &first_note {
-        println!("First detected note: {}", note);
-    }
+
+    // Verbose check: first note detection
+    let det_str = match first_note_ms {
+        Some(t) => format!("{} at {:.1} ms", first_note_str, t),
+        None    => "(no notes anywhere in fixture)".to_string(),
+    };
+    check(
+        total_ms,
+        "≥1 note detected somewhere in test_fixture.wav",
+        &det_str,
+        frames_with_notes > 0,
+    );
+
+    // Verbose check: detection rate
+    check(
+        total_ms,
+        "Detection rate > 0%",
+        &format!("{:.1}% of frames contain notes", det_ratio),
+        frames_with_notes > 0,
+    );
 
     assert!(
         frames_with_notes > 0,
@@ -159,17 +199,30 @@ fn fixture_wav_duration_is_valid() {
 
     let sr = if sample_rate == 0 { 44_100 } else { sample_rate };
     let duration_s = samples.len() as f32 / sr as f32;
+    let duration_ms = duration_s * 1_000.0;
 
-    println!(
-        "test_fixture.wav: {:.1} s ({:.1} min) at {} Hz",
-        duration_s,
-        duration_s / 60.0,
-        sr
+    let det_str = format!("{:.1} s ({:.1} min) at {} Hz", duration_s, duration_s / 60.0, sr);
+
+    // Lower bound: at least 1 second
+    let min_ok = duration_s >= 1.0;
+    check(
+        duration_ms,
+        "Duration ≥ 1.0 s",
+        &det_str,
+        min_ok,
     );
+    assert!(min_ok, "Fixture is shorter than 1 second");
 
-    assert!(duration_s >= 1.0, "Fixture is shorter than 1 second");
+    // Upper bound: at most 3 minutes + 1 s tolerance
+    let max_ok = duration_s <= MAX_FIXTURE_DURATION_SECONDS;
+    check(
+        duration_ms,
+        &format!("Duration ≤ {:.0} s (3 min + 1 s tolerance)", MAX_FIXTURE_DURATION_SECONDS),
+        &det_str,
+        max_ok,
+    );
     assert!(
-        duration_s <= MAX_FIXTURE_DURATION_SECONDS,
+        max_ok,
         "Fixture is longer than 3 minutes ({:.1} s)",
         duration_s
     );

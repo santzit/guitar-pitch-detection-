@@ -217,6 +217,21 @@ fn detect_section(samples: &[f32]) -> guitar_pitch_detection::DetectionResult {
     det.process(samples)
 }
 
+/// Print one verbose check line.
+///
+/// ```text
+/// [  900.0 ms] Expected: A3 (MIDI 57, 220.00 Hz)  |  Detected: A3 (MIDI 57, 220.1 Hz, conf 0.91)  –  OK
+/// ```
+fn check(time_ms: f32, expected: &str, detected: &str, passed: bool) {
+    println!(
+        "[{:8.1} ms] Expected: {:<45}  |  Detected: {}  –  {}",
+        time_ms,
+        expected,
+        detected,
+        if passed { "OK" } else { "FAILED" }
+    );
+}
+
 // ── Per-note tests ────────────────────────────────────────────────────────────
 //
 // Each test:
@@ -224,14 +239,24 @@ fn detect_section(samples: &[f32]) -> guitar_pitch_detection::DetectionResult {
 //     writes it to `tests/fixtures/open_e_notes_48k.wav`, and decodes it back.
 //  2. Extracts the sample range for the specific note.
 //  3. Runs the pitch detector on that range.
-//  4. Asserts the expected MIDI note is among the detected notes.
+//  4. Prints: Expected note name/MIDI | Detected note/MIDI at N ms – OK/FAILED
+//  5. Asserts the expected MIDI note is among the detected notes.
 
 /// A3 — 220.00 Hz, MIDI 57.
 #[test]
 fn wav_48k_open_e_note_a() {
     let all = open_e_notes_samples();
     let start = note_start(0);
-    let result = detect_section(&all[start..start + section_samples()]);
+    let seg = &all[start..start + section_samples()];
+    let t = (start + seg.len()) as f32 * 1_000.0 / SR_F;
+    let result = detect_section(seg);
+
+    let exp = "Note A3 (MIDI 57, 220.00 Hz)";
+    let det_str = notes_summary(&result);
+    let passed = !result.notes.is_empty()
+        && result.notes.iter().any(|n| (n.midi_note as i16 - 57).abs() <= 1);
+    check(t, exp, &det_str, passed);
+
     assert!(!result.notes.is_empty(), "A3: no notes detected");
     assert!(
         result.notes.iter().any(|n| (n.midi_note as i16 - 57).abs() <= 1),
@@ -245,7 +270,16 @@ fn wav_48k_open_e_note_a() {
 fn wav_48k_open_e_note_b() {
     let all = open_e_notes_samples();
     let start = note_start(1);
-    let result = detect_section(&all[start..start + section_samples()]);
+    let seg = &all[start..start + section_samples()];
+    let t = (start + seg.len()) as f32 * 1_000.0 / SR_F;
+    let result = detect_section(seg);
+
+    let exp = "Note B3 (MIDI 59, 246.94 Hz)";
+    let det_str = notes_summary(&result);
+    let passed = !result.notes.is_empty()
+        && result.notes.iter().any(|n| (n.midi_note as i16 - 59).abs() <= 1);
+    check(t, exp, &det_str, passed);
+
     assert!(!result.notes.is_empty(), "B3: no notes detected");
     assert!(
         result.notes.iter().any(|n| (n.midi_note as i16 - 59).abs() <= 1),
@@ -259,7 +293,16 @@ fn wav_48k_open_e_note_b() {
 fn wav_48k_open_e_note_c() {
     let all = open_e_notes_samples();
     let start = note_start(2);
-    let result = detect_section(&all[start..start + section_samples()]);
+    let seg = &all[start..start + section_samples()];
+    let t = (start + seg.len()) as f32 * 1_000.0 / SR_F;
+    let result = detect_section(seg);
+
+    let exp = "Note C4 (MIDI 60, 261.63 Hz)";
+    let det_str = notes_summary(&result);
+    let passed = !result.notes.is_empty()
+        && result.notes.iter().any(|n| (n.midi_note as i16 - 60).abs() <= 1);
+    check(t, exp, &det_str, passed);
+
     assert!(!result.notes.is_empty(), "C4: no notes detected");
     assert!(
         result.notes.iter().any(|n| (n.midi_note as i16 - 60).abs() <= 1),
@@ -273,7 +316,16 @@ fn wav_48k_open_e_note_c() {
 fn wav_48k_open_e_note_d() {
     let all = open_e_notes_samples();
     let start = note_start(3);
-    let result = detect_section(&all[start..start + section_samples()]);
+    let seg = &all[start..start + section_samples()];
+    let t = (start + seg.len()) as f32 * 1_000.0 / SR_F;
+    let result = detect_section(seg);
+
+    let exp = "Note D3 (MIDI 50, 146.83 Hz)";
+    let det_str = notes_summary(&result);
+    let passed = !result.notes.is_empty()
+        && result.notes.iter().any(|n| (n.midi_note as i16 - 50).abs() <= 1);
+    check(t, exp, &det_str, passed);
+
     assert!(!result.notes.is_empty(), "D3: no notes detected");
     assert!(
         result.notes.iter().any(|n| (n.midi_note as i16 - 50).abs() <= 1),
@@ -287,7 +339,16 @@ fn wav_48k_open_e_note_d() {
 fn wav_48k_open_e_note_e() {
     let all = open_e_notes_samples();
     let start = note_start(4);
-    let result = detect_section(&all[start..start + section_samples()]);
+    let seg = &all[start..start + section_samples()];
+    let t = (start + seg.len()) as f32 * 1_000.0 / SR_F;
+    let result = detect_section(seg);
+
+    let exp = "Note E3 (MIDI 52, 164.81 Hz)";
+    let det_str = notes_summary(&result);
+    let passed = !result.notes.is_empty()
+        && result.notes.iter().any(|n| (n.midi_note as i16 - 52).abs() <= 1);
+    check(t, exp, &det_str, passed);
+
     assert!(!result.notes.is_empty(), "E3: no notes detected");
     assert!(
         result.notes.iter().any(|n| (n.midi_note as i16 - 52).abs() <= 1),
@@ -301,11 +362,35 @@ fn wav_48k_open_e_note_e() {
 fn wav_48k_open_e_note_f() {
     let all = open_e_notes_samples();
     let start = note_start(5);
-    let result = detect_section(&all[start..start + section_samples()]);
+    let seg = &all[start..start + section_samples()];
+    let t = (start + seg.len()) as f32 * 1_000.0 / SR_F;
+    let result = detect_section(seg);
+
+    let exp = "Note F3 (MIDI 53, 174.61 Hz)";
+    let det_str = notes_summary(&result);
+    let passed = !result.notes.is_empty()
+        && result.notes.iter().any(|n| (n.midi_note as i16 - 53).abs() <= 1);
+    check(t, exp, &det_str, passed);
+
     assert!(!result.notes.is_empty(), "F3: no notes detected");
     assert!(
         result.notes.iter().any(|n| (n.midi_note as i16 - 53).abs() <= 1),
         "F3: expected MIDI 53, got {:?}",
         result.notes.iter().map(|n| n.midi_note).collect::<Vec<_>>()
     );
+}
+
+// ── Formatting helper ─────────────────────────────────────────────────────────
+
+/// Summarise detected notes as a human-readable string.
+fn notes_summary(result: &guitar_pitch_detection::DetectionResult) -> String {
+    if result.notes.is_empty() {
+        return "(no notes detected)".to_string();
+    }
+    result
+        .notes
+        .iter()
+        .map(|n| format!("{} (MIDI {}, {:.1} Hz, conf {:.2})", n.name, n.midi_note, n.frequency, n.confidence))
+        .collect::<Vec<_>>()
+        .join("; ")
 }

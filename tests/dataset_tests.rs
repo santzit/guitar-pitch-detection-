@@ -5,6 +5,9 @@
 //!
 //! Technique-detection regression tests run unconditionally using synthetic
 //! audio that mimics real guitar playing techniques.
+//!
+//! All tests print a structured line per check:
+//! `[  N ms] Expected: <X>  |  Detected: <Y>  –  OK / FAILED`
 
 use guitar_pitch_detection::{GuitarPitchDetector, GuitarTechnique};
 use std::f32::consts::TAU;
@@ -50,6 +53,37 @@ fn find_wav_files(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// Print one verbose check line.
+///
+/// ```text
+/// [  247.1 ms] Expected: Bend > 1.0 st  |  Detected: Bend(+1.83 st)  –  OK
+/// ```
+fn check(time_ms: f32, expected: &str, detected: &str, passed: bool) {
+    println!(
+        "[{:8.1} ms] Expected: {:<45}  |  Detected: {}  –  {}",
+        time_ms,
+        expected,
+        detected,
+        if passed { "OK" } else { "FAILED" }
+    );
+}
+
+/// Format a `GuitarTechnique` as a compact human-readable string.
+fn fmt_technique(t: &GuitarTechnique) -> String {
+    match t {
+        GuitarTechnique::Bend { semitones } => format!("Bend({:+.2} st)", semitones),
+        GuitarTechnique::Slide { from_midi, to_midi, ascending } => {
+            format!("Slide({} → {} {})", from_midi, to_midi, if *ascending { "↑" } else { "↓" })
+        }
+        GuitarTechnique::Vibrato { rate_hz, depth_semitones } => {
+            format!("Vibrato({:.1} Hz, {:.2} st)", rate_hz, depth_semitones)
+        }
+        GuitarTechnique::PalmMute => "PalmMute".to_string(),
+        GuitarTechnique::HammerOn => "HammerOn".to_string(),
+        GuitarTechnique::PullOff => "PullOff".to_string(),
+    }
+}
+
 // ── Technique regression tests (always run) ───────────────────────────────────
 
 const SR: u32 = 44_100;
@@ -70,18 +104,34 @@ fn technique_bend_detected_from_synthetic_audio() {
         })
         .collect();
 
-    // Feed in frames.
+    let exp = "Bend > 1.0 st on A4→B4 (0–500 ms)";
     let mut found_bend = false;
-    for chunk in samples.chunks(FRAME) {
+    let mut detected_at_ms: Option<f32> = None;
+    let mut detected_desc = String::new();
+
+    for (frame_idx, chunk) in samples.chunks(FRAME).enumerate() {
+        let frame_ms = frame_idx as f32 * FRAME as f32 * 1_000.0 / SR as f32;
         let result = detector.process(chunk);
-        if result
-            .techniques
-            .iter()
-            .any(|t| matches!(t, GuitarTechnique::Bend { semitones } if *semitones > 1.0))
-        {
+        if let Some(t) = result.techniques.iter().find(|t| {
+            matches!(t, GuitarTechnique::Bend { semitones } if *semitones > 1.0)
+        }) {
+            if !found_bend {
+                detected_at_ms = Some(frame_ms);
+                detected_desc = fmt_technique(t);
+            }
             found_bend = true;
             break;
         }
+    }
+
+    match detected_at_ms {
+        Some(t) => check(t, exp, &detected_desc, true),
+        None    => check(
+            total as f32 * 1_000.0 / SR as f32,
+            exp,
+            "(not detected)",
+            false,
+        ),
     }
 
     assert!(found_bend, "Expected a bend to be detected in the rising-pitch signal");
@@ -102,17 +152,36 @@ fn technique_vibrato_detected_from_synthetic_audio() {
         })
         .collect();
 
+    let exp = "Vibrato (6 Hz, ±0.3 st) on A4 (0–1000 ms)";
     let mut found_vibrato = false;
-    for chunk in samples.chunks(FRAME) {
+    let mut detected_at_ms: Option<f32> = None;
+    let mut detected_desc = String::new();
+
+    for (frame_idx, chunk) in samples.chunks(FRAME).enumerate() {
+        let frame_ms = frame_idx as f32 * FRAME as f32 * 1_000.0 / SR as f32;
         let result = detector.process(chunk);
-        if result
+        if let Some(t) = result
             .techniques
             .iter()
-            .any(|t| matches!(t, GuitarTechnique::Vibrato { .. }))
+            .find(|t| matches!(t, GuitarTechnique::Vibrato { .. }))
         {
+            if !found_vibrato {
+                detected_at_ms = Some(frame_ms);
+                detected_desc = fmt_technique(t);
+            }
             found_vibrato = true;
             break;
         }
+    }
+
+    match detected_at_ms {
+        Some(t) => check(t, exp, &detected_desc, true),
+        None    => check(
+            total as f32 * 1_000.0 / SR as f32,
+            exp,
+            "(not detected)",
+            false,
+        ),
     }
 
     assert!(
@@ -139,17 +208,36 @@ fn technique_slide_detected_from_synthetic_audio() {
         })
         .collect();
 
+    let exp = "Slide E3→A3 (≈5 st, 0–300 ms)";
     let mut found_slide = false;
-    for chunk in samples.chunks(FRAME) {
+    let mut detected_at_ms: Option<f32> = None;
+    let mut detected_desc = String::new();
+
+    for (frame_idx, chunk) in samples.chunks(FRAME).enumerate() {
+        let frame_ms = frame_idx as f32 * FRAME as f32 * 1_000.0 / SR as f32;
         let result = detector.process(chunk);
-        if result
+        if let Some(t) = result
             .techniques
             .iter()
-            .any(|t| matches!(t, GuitarTechnique::Slide { .. }))
+            .find(|t| matches!(t, GuitarTechnique::Slide { .. }))
         {
+            if !found_slide {
+                detected_at_ms = Some(frame_ms);
+                detected_desc = fmt_technique(t);
+            }
             found_slide = true;
             break;
         }
+    }
+
+    match detected_at_ms {
+        Some(t) => check(t, exp, &detected_desc, true),
+        None    => check(
+            total as f32 * 1_000.0 / SR as f32,
+            exp,
+            "(not detected)",
+            false,
+        ),
     }
 
     assert!(found_slide, "Expected a slide to be detected in the gliding-pitch signal");
@@ -159,20 +247,40 @@ fn technique_slide_detected_from_synthetic_audio() {
 #[test]
 fn technique_no_false_positives_on_steady_note() {
     let mut detector = GuitarPitchDetector::new(SR, FRAME);
-    let samples = sine(440.0, SR as usize, SR as f32);
+    let total = SR as usize;
+    let samples = sine(440.0, total, SR as f32);
 
+    let exp = "No Bend or Slide on steady A4 (1 s)";
     let mut had_false_positive = false;
-    for chunk in samples.chunks(FRAME) {
+    let mut fp_at_ms: Option<f32> = None;
+    let mut fp_desc = String::new();
+
+    for (frame_idx, chunk) in samples.chunks(FRAME).enumerate() {
+        let frame_ms = frame_idx as f32 * FRAME as f32 * 1_000.0 / SR as f32;
         let result = detector.process(chunk);
-        if result.techniques.iter().any(|t| {
+        if let Some(t) = result.techniques.iter().find(|t| {
             matches!(
                 t,
                 GuitarTechnique::Bend { .. } | GuitarTechnique::Slide { .. }
             )
         }) {
+            if !had_false_positive {
+                fp_at_ms = Some(frame_ms);
+                fp_desc = fmt_technique(t);
+            }
             had_false_positive = true;
             break;
         }
+    }
+
+    match fp_at_ms {
+        Some(t) => check(t, exp, &format!("FALSE POSITIVE: {}", fp_desc), false),
+        None    => check(
+            total as f32 * 1_000.0 / SR as f32,
+            exp,
+            "(none — correct)",
+            true,
+        ),
     }
 
     assert!(
@@ -186,14 +294,27 @@ fn technique_no_false_positives_on_steady_note() {
 fn chord_and_techniques_coexist() {
     let mut detector = GuitarPitchDetector::new(SR, FRAME);
     // A minor triad: A3 (220), C4 (261.63), E4 (329.63)
+    let num_samples = SR as usize;
     let chord_signal = mix(&[
-        sine(220.0, SR as usize, SR as f32),
-        sine(261.63, SR as usize, SR as f32),
-        sine(329.63, SR as usize, SR as f32),
+        sine(220.0, num_samples, SR as f32),
+        sine(261.63, num_samples, SR as f32),
+        sine(329.63, num_samples, SR as f32),
     ]);
     let result = detector.process(&chord_signal);
-    // We don't assert a specific chord here (timing variance), just no panic.
-    let _ = result.chord;
+    let t = num_samples as f32 * 1_000.0 / SR as f32;
+    let notes_str = if result.notes.is_empty() {
+        "(none)".to_string()
+    } else {
+        result.notes.iter().map(|n| n.name).collect::<Vec<_>>().join(", ")
+    };
+    // Chord detection is optional here — we just verify it doesn't panic.
+    let chord_str = result
+        .chord
+        .as_ref()
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "(none)".to_string());
+    check(t, "Am triad notes (A3 C4 E4)", &notes_str, !result.notes.is_empty());
+    check(t, "Chord (optional)", &chord_str, true);
     let _ = result.techniques;
 }
 
@@ -214,7 +335,11 @@ fn guitarset_wav_files_detect_notes() {
     }
 
     wav_files.sort();
-    println!("GuitarSet: testing {} WAV file(s)", wav_files.len());
+    println!(
+        "\nGuitarSet: testing {} WAV file(s)\n{}\n",
+        wav_files.len(),
+        "─".repeat(90)
+    );
 
     let mut passed = 0usize;
     let mut failed = 0usize;
@@ -224,7 +349,7 @@ fn guitarset_wav_files_detect_notes() {
         match std::panic::catch_unwind(|| run_detection_on_wav(path)) {
             Ok(()) => passed += 1,
             Err(_) => {
-                let msg = format!("FAIL: {}", path.display());
+                let msg = format!("FAILED: {}", path.display());
                 eprintln!("{}", msg);
                 failures.push(msg);
                 failed += 1;
@@ -233,7 +358,10 @@ fn guitarset_wav_files_detect_notes() {
     }
 
     println!(
-        "GuitarSet results: {passed} passed, {failed} failed out of {}",
+        "\n{}\nGuitarSet summary: {} PASSED  {} FAILED  (total {})\n",
+        "─".repeat(90),
+        passed,
+        failed,
         wav_files.len()
     );
 
@@ -261,7 +389,11 @@ fn idmt_guitar_wav_files_detect_notes() {
     }
 
     wav_files.sort();
-    println!("IDMT-SMT-Guitar: testing {} WAV file(s)", wav_files.len());
+    println!(
+        "\nIDMT-SMT-Guitar: testing {} WAV file(s)\n{}\n",
+        wav_files.len(),
+        "─".repeat(90)
+    );
 
     let mut passed = 0usize;
     let mut failed = 0usize;
@@ -271,7 +403,7 @@ fn idmt_guitar_wav_files_detect_notes() {
         match std::panic::catch_unwind(|| run_detection_on_wav(path)) {
             Ok(()) => passed += 1,
             Err(_) => {
-                let msg = format!("FAIL: {}", path.display());
+                let msg = format!("FAILED: {}", path.display());
                 eprintln!("{}", msg);
                 failures.push(msg);
                 failed += 1;
@@ -280,7 +412,10 @@ fn idmt_guitar_wav_files_detect_notes() {
     }
 
     println!(
-        "IDMT results: {passed} passed, {failed} failed out of {}",
+        "\n{}\nIDMT-SMT-Guitar summary: {} PASSED  {} FAILED  (total {})\n",
+        "─".repeat(90),
+        passed,
+        failed,
         wav_files.len()
     );
 
@@ -293,36 +428,55 @@ fn idmt_guitar_wav_files_detect_notes() {
 
 // ── WAV runner (pure-Rust fallback, no rodio needed) ─────────────────────────
 
-/// Run the detector over a WAV file using the built-in pure-Rust WAV codec
-/// (same codec used in open_e_notes_test.rs and wav_chord_tests.rs).
+/// Run the detector over a WAV file using the built-in pure-Rust WAV codec.
+/// Prints a verbose check line for every frame where a note is first detected.
 /// Asserts that at least one note is detected somewhere in the file.
 fn run_detection_on_wav(path: &Path) {
-    println!("Testing: {}", path.display());
+    let file_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
 
     let bytes = std::fs::read(path).expect("failed to read WAV file");
     let samples = decode_wav_i16(&bytes);
 
     assert!(!samples.is_empty(), "WAV file contained no samples");
 
-    // Assume 44.1 kHz; if the file is at a different rate the detector still
-    // runs — pitch accuracy is not asserted here, just that it doesn't panic
-    // and returns at least one note somewhere in the recording.
-    let mut detector = GuitarPitchDetector::new(44_100, 512);
+    let sr = 44_100u32;
+    let frame_size = 512usize;
+    let mut detector = GuitarPitchDetector::new(sr, frame_size);
     let mut detected_any = false;
+    let mut first_note_ms: Option<f32> = None;
+    let mut first_note_str = String::new();
 
-    for chunk in samples.chunks(512) {
+    for (frame_idx, chunk) in samples.chunks(frame_size).enumerate() {
+        let frame_ms = frame_idx as f32 * frame_size as f32 * 1_000.0 / sr as f32;
         let result = detector.process(chunk);
-        if !result.notes.is_empty() {
-            detected_any = true;
-            println!(
-                "  Note: {} ({:.1} Hz, confidence {:.2})",
-                result.notes[0].name,
-                result.notes[0].frequency,
-                result.notes[0].confidence
+
+        if !result.notes.is_empty() && !detected_any {
+            let n = &result.notes[0];
+            first_note_ms = Some(frame_ms);
+            first_note_str = format!(
+                "{} (MIDI {}, {:.1} Hz, conf {:.2})",
+                n.name, n.midi_note, n.frequency, n.confidence
             );
-            break;
+            detected_any = true;
         }
     }
+
+    let total_ms = samples.len() as f32 * 1_000.0 / sr as f32;
+    let det_str = match first_note_ms {
+        Some(t) => format!("{} at {:.1} ms", first_note_str, t),
+        None    => "(no notes in entire file)".to_string(),
+    };
+
+    check(
+        total_ms,
+        &format!("≥1 note somewhere in {}", file_name),
+        &det_str,
+        detected_any,
+    );
 
     assert!(
         detected_any,

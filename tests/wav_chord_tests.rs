@@ -148,8 +148,24 @@ fn run_detector(samples: &[f32]) -> guitar_pitch_detection::DetectionResult {
     det.process(samples)
 }
 
+/// Print one verbose check line.
+///
+/// ```text
+/// [ 1000.0 ms] Expected: A Major (root pc=9)  |  Detected: A (root=9, quality=Major)  –  OK
+/// ```
+fn check(time_ms: f32, expected: &str, detected: &str, passed: bool) {
+    println!(
+        "[{:8.1} ms] Expected: {:<50}  |  Detected: {}  –  {}",
+        time_ms,
+        expected,
+        detected,
+        if passed { "OK" } else { "FAILED" }
+    );
+}
+
 /// Assert that the three pitch classes of a major chord are all present in the
 /// detection result, and that the chord is identified with the correct name.
+/// Prints a verbose check line for each assertion.
 ///
 /// Pitch-class layout for a major chord rooted at `root`:
 /// - root         (interval 0)
@@ -160,6 +176,11 @@ fn assert_major_chord_detected(
     root_pc: u8,
     chord_name: &str,
 ) {
+    let t = CHORD_SECS * 1_000.0;
+
+    // Notes present?
+    let exp_notes = format!("{chord_name} Major: notes detected");
+    check(t, &exp_notes, if result.notes.is_empty() { "(none)" } else { "(present)" }, !result.notes.is_empty());
     assert!(
         !result.notes.is_empty(),
         "{chord_name} Major: no notes detected at all"
@@ -168,30 +189,64 @@ fn assert_major_chord_detected(
     let detected_pcs: std::collections::HashSet<u8> =
         result.notes.iter().map(|n| n.semitone).collect();
 
+    // Each pitch class present?
     let expected_pcs = [root_pc % 12, (root_pc + 4) % 12, (root_pc + 7) % 12];
     for &pc in &expected_pcs {
+        let det_pcs_str = format!("{:?}", detected_pcs);
+        let present = detected_pcs.contains(&pc);
+        check(
+            t,
+            &format!("{chord_name} Major: pitch class {pc} in detected notes"),
+            &det_pcs_str,
+            present,
+        );
         assert!(
-            detected_pcs.contains(&pc),
+            present,
             "{chord_name} Major: pitch class {pc} not detected; got {:?}",
             detected_pcs
         );
     }
 
+    // Chord name correct?
     let chord = result
         .chord
         .as_ref()
         .unwrap_or_else(|| panic!("{chord_name} Major: no chord detected; notes={detected_pcs:?}"));
+    let chord_det = format!("{} (quality={:?}, root={})", chord.name, chord.quality, chord.root);
 
+    let q_ok = chord.quality == ChordQuality::Major;
+    check(
+        t,
+        &format!("{chord_name} Major: quality=Major"),
+        &chord_det,
+        q_ok,
+    );
     assert_eq!(
         chord.quality,
         ChordQuality::Major,
         "{chord_name}: expected Major quality, got {:?}",
         chord.quality
     );
+
+    let root_ok = chord.root == root_pc;
+    check(
+        t,
+        &format!("{chord_name} Major: root pitch-class={root_pc}"),
+        &format!("root={}", chord.root),
+        root_ok,
+    );
     assert_eq!(
         chord.root, root_pc,
         "{chord_name}: expected root pitch-class {root_pc}, got {}",
         chord.root
+    );
+
+    let name_ok = chord.name == chord_name;
+    check(
+        t,
+        &format!("Chord name = \"{chord_name}\""),
+        &format!("\"{}\"", chord.name),
+        name_ok,
     );
     assert_eq!(
         chord.name, chord_name,
@@ -282,14 +337,37 @@ fn wav_f_major() {
 /// (~3 × 10⁻⁵).
 #[test]
 fn wav_encode_decode_roundtrip() {
-    let original: Vec<f32> = (0..1024)
+    let num_samples = 1024usize;
+    let original: Vec<f32> = (0..num_samples)
         .map(|i| (TAU * 440.0 * i as f32 / SR_F).sin())
         .collect();
 
     let wav_bytes = encode_wav_i16(&original, SR);
     let decoded = decode_wav_i16(&wav_bytes);
 
+    let t = num_samples as f32 * 1_000.0 / SR_F;
+
+    check(
+        t,
+        &format!("WAV round-trip: {} samples preserved", num_samples),
+        &format!("{} samples recovered", decoded.len()),
+        decoded.len() == num_samples,
+    );
     assert_eq!(decoded.len(), original.len());
+
+    let max_err = original
+        .iter()
+        .zip(decoded.iter())
+        .map(|(&o, &d)| (o - d).abs())
+        .fold(0.0_f32, f32::max);
+    let tol_ok = max_err < I16_QUANTIZATION_TOLERANCE;
+    check(
+        t,
+        &format!("Round-trip error < {:.2e}", I16_QUANTIZATION_TOLERANCE),
+        &format!("max err = {:.2e}", max_err),
+        tol_ok,
+    );
+
     for (i, (&orig, &dec)) in original.iter().zip(decoded.iter()).enumerate() {
         let err = (orig - dec).abs();
         assert!(
