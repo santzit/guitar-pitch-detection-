@@ -14,6 +14,22 @@ categories = ["multimedia::audio", "science"]
 name = "guitar_pitch_detection"
 crate-type = ["cdylib", "rlib"]
 
+# ── Binary targets ─────────────────────────────────────────────────────────────
+
+## Interactive terminal CLI: lists input devices, opens one, and prints
+## detected notes / chords / techniques in real time.
+## Run with:  cargo run --bin cli --features audio_input
+[[bin]]
+name = "cli"
+path = "src/bin/cli.rs"
+
+## Test-fixture generator: concatenates GuitarSet + IDMT samples into a single
+## WAV file (≤ 3 min) at tests/dataset/test_fixture.wav for automated tests.
+## Run with:  cargo run --bin make_test_wav
+[[bin]]
+name = "make_test_wav"
+path = "src/bin/make_test_wav.rs"
+
 # ── Optional features ──────────────────────────────────────────────────────────
 [features]
 default = []

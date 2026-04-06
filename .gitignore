@@ -22,3 +22,6 @@ target
 
 # Generated WAV fixture files (created at test runtime for manual playback)
 tests/fixtures/
+
+# Generated test-fixture WAV (produced by `cargo run --bin make_test_wav`)
+tests/dataset/test_fixture.wav
