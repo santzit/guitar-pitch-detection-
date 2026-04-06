@@ -121,6 +121,40 @@ fn technique_vibrato_detected_from_synthetic_audio() {
     );
 }
 
+/// Simulate and detect a slide: pitch glides from E3 (164.8 Hz) to A3 (220 Hz)
+/// over ~300 ms at constant speed (≥ 5 semitones, fast enough to be a slide).
+#[test]
+fn technique_slide_detected_from_synthetic_audio() {
+    let mut detector = GuitarPitchDetector::new(SR, FRAME);
+
+    // Glide from E3 (164.81 Hz) up to A3 (220.00 Hz) — exactly 5 semitones —
+    // in 13230 samples (≈ 300 ms).  Speed ≈ 16.7 semitones/second, well above
+    // the slide threshold.
+    let total = (SR as f32 * 0.3) as usize;
+    let samples: Vec<f32> = (0..total)
+        .map(|i| {
+            let progress = i as f32 / total as f32;
+            let freq = 164.81 * 2.0_f32.powf(5.0 * progress / 12.0);
+            (TAU * freq * i as f32 / SR as f32).sin()
+        })
+        .collect();
+
+    let mut found_slide = false;
+    for chunk in samples.chunks(FRAME) {
+        let result = detector.process(chunk);
+        if result
+            .techniques
+            .iter()
+            .any(|t| matches!(t, GuitarTechnique::Slide { .. }))
+        {
+            found_slide = true;
+            break;
+        }
+    }
+
+    assert!(found_slide, "Expected a slide to be detected in the gliding-pitch signal");
+}
+
 /// Steady note must produce no bend or slide.
 #[test]
 fn technique_no_false_positives_on_steady_note() {
