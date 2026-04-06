@@ -215,7 +215,7 @@ fn guitarset_wav_files_detect_notes() {
 #[test]
 fn idmt_guitar_wav_files_detect_notes() {
     let dataset_dir = Path::new("tests/dataset/idmt_guitar");
-    let wav_files = find_wav_files(dataset_dir);
+    let mut wav_files = find_wav_files(dataset_dir);
 
     if wav_files.is_empty() {
         println!(
@@ -226,11 +226,35 @@ fn idmt_guitar_wav_files_detect_notes() {
         return;
     }
 
-    println!("Found {} IDMT WAV file(s)", wav_files.len());
+    wav_files.sort();
+    println!("IDMT-SMT-Guitar: testing {} WAV file(s)", wav_files.len());
 
-    // Test the first file only (CI time budget).
-    let path = &wav_files[0];
-    run_detection_on_wav(path);
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    for path in &wav_files {
+        match std::panic::catch_unwind(|| run_detection_on_wav(path)) {
+            Ok(()) => passed += 1,
+            Err(_) => {
+                let msg = format!("FAIL: {}", path.display());
+                eprintln!("{}", msg);
+                failures.push(msg);
+                failed += 1;
+            }
+        }
+    }
+
+    println!(
+        "IDMT results: {passed} passed, {failed} failed out of {}",
+        wav_files.len()
+    );
+
+    assert!(
+        failures.is_empty(),
+        "IDMT-SMT-Guitar test failures:\n{}",
+        failures.join("\n")
+    );
 }
 
 // ── WAV runner (pure-Rust fallback, no rodio needed) ─────────────────────────

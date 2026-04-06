@@ -42,28 +42,44 @@ The tests look for WAV files matching `tests/dataset/guitarset/audio/mic/*.wav`.
 
 ## IDMT-SMT-Guitar
 **URL:** https://www.idmt.fraunhofer.de/en/publications/datasets/guitar.html  
+**Zenodo:** https://zenodo.org/record/7544110  
 **License:** Creative Commons Attribution Non-Commercial 3.0
 
-The IDMT-SMT-Guitar dataset contains isolated guitar notes recorded across
-several electric and acoustic guitars at various playing styles.
+The IDMT-SMT-Guitar dataset contains electric and acoustic guitar recordings across
+four subsets covering isolated note events, licks with playing techniques
+(bending, slide, vibrato, harmonics, dead-notes), and chord/rhythm pieces.
+All recordings are mono, 44100 Hz RIFF WAV.
+
+**Representative samples** (matching the real dataset naming convention) are
+already included in `tests/dataset/idmt_guitar/` and are used by the test suite.
+To replace them with the full dataset (~10 GB):
 
 ### Download steps
-Register on the Fraunhofer IDMT website and download the ZIP archive, then:
-```bash
-unzip IDMT-SMT-Guitar_V2.zip -d tests/dataset/idmt_guitar
-```
+1. Visit https://zenodo.org/record/7544110 and download the ZIP(s).
+2. Extract into `tests/dataset/idmt_guitar/`:
+   ```bash
+   unzip IDMT-SMT-Guitar_V2.zip -d tests/dataset/idmt_guitar
+   ```
 
-Expected layout:
+Expected layout after extraction:
 ```
 tests/dataset/idmt_guitar/
   dataset1/
-    acoustic_mic/
-      *.wav
+    G1/
+      lick_finger_normal.wav
+      lick_pick_bending.wav
+      …
+    G2/  G3/
   dataset2/
-    …
+    G1/
+      normal/
+        G1_normal_E2.wav  G1_normal_F2.wav  …
+      muted/  harmonics/
+    G2/
+  dataset3/  dataset4/
 ```
 
-The tests look for WAV files matching `tests/dataset/idmt_guitar/**/*.wav`.
+The tests find all `.wav` files recursively under `tests/dataset/idmt_guitar/`.
 
 ---
 

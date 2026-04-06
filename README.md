@@ -241,7 +241,8 @@ tests/
   dataset/
     guitarset/audio/mic/    — GuitarSet representative samples
                               (replace with real dataset — see README inside)
-    idmt_guitar/            — IDMT-SMT-Guitar (download separately)
+    idmt_guitar/            — IDMT-SMT-Guitar representative samples
+                              (replace with full dataset from zenodo.org/record/7544110)
     README.md               — dataset download instructions
 ```
 
@@ -278,8 +279,14 @@ gs.download(partial_download=['audio_mic'])
 "
 ```
 
-IDMT-SMT-Guitar requires manual registration at
-https://www.idmt.fraunhofer.de/en/publications/datasets/guitar.html
+IDMT-SMT-Guitar representative samples (156 WAV files matching the real dataset's
+naming and directory convention) are included in `tests/dataset/idmt_guitar/`.
+To replace them with the full dataset, download from
+https://zenodo.org/record/7544110 and extract into `tests/dataset/idmt_guitar/`.
+
+```bash
+unzip IDMT-SMT-Guitar_V2.zip -d tests/dataset/idmt_guitar
+```
 
 ---
 
