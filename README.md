@@ -1,84 +1,179 @@
 # guitar-pitch-detection
 
 A **Rust library** for real-time polyphonic guitar pitch detection.
-Designed to be embedded in a [Godot 4](https://godotengine.org/) rhythm game (think Rocksmith) that needs to detect notes, chords, and guitar runs from live audio input.
-
-## Algorithm
-
-The core is a **complex resonator bank** — the same time-domain algorithm described in:
-
-> *"A Computationally Efficient Method for Polyphonic Pitch Estimation"*
-> Zhou, Reiss, Mattavelli, Zoia
-> (implemented in C++ by [luciamarock/Polyphonic-Pitch-Detector-for-guitars](https://github.com/luciamarock/Polyphonic-Pitch-Detector-for-guitars))
-
-One resonator is tuned to each semitone in the guitar range (C2 – E6, MIDI 36–88).
-Each resonator runs the first-order IIR filter:
-
-```
-r[n] = x[n] + α · r[n-1] · e^(j·ω₀)
-```
-
-After processing a frame, the resonator with the highest energy corresponds to
-the sounding pitch.
-
-**Key properties**
-| Property | Value |
-|---|---|
-| Latency | Configurable (default frame ≈ 11 ms at 44.1 kHz) |
-| Polyphony | Up to 6 simultaneous notes (one per guitar string) |
-| Dependencies | **Zero** — pure Rust, no MATLAB, no FFT library |
-| Platforms | Any (Linux, macOS, Windows, Raspberry Pi, WASM) |
+Designed to be embedded in a [Godot 4](https://godotengine.org/) rhythm game (think Rocksmith) that
+detects notes, chords, and playing techniques from live audio input.
 
 ---
 
-## Features
+## What's new in v0.2
 
-- 🎸 **All 6 open strings** — E2, A2, D3, G3, B3, E4 — detected accurately
-- 🎵 **Chords** — Major, Minor, Dom7, Maj7, Min7, Dim, Aug, Sus2, Sus4, Power
-- ⚡ **Real-time** — O(N\_notes × N\_samples) per frame, negligible CPU cost
-- 🕹️ **Godot-ready** — C FFI layer (`extern "C"`) for GDExtension integration
-- 🔧 **Configurable** — sample rate, alpha (decay), threshold, polyphony limit
+| Area | Change |
+|---|---|
+| **Pitch engine** | Replaced pure resonator bank with [cycfi/q](https://github.com/cycfi/q) (C++ BACF algorithm) via Rust FFI — faster lock-on, better accuracy on real guitar signals |
+| **Audio I/O** | Unified under the **cpal** ecosystem: `rodio` decodes WAV / OGG / MP3 / FLAC; `cpal` drives live USB capture (Rocksmith Real Tone Cable) |
+| **DSP utilities** | [dasp](https://github.com/RustAudio/dasp) added for sample-format conversions (i16 ↔ f32 ↔ u16) |
+| **Techniques** | Bend, slide, vibrato, palm mute detected from Q's continuous pitch stream |
+| **Datasets** | GuitarSet representative samples included in `tests/dataset/guitarset/` |
+
+---
+
+## Architecture
+
+```
+┌──────────────────── GuitarPitchDetector ────────────────────────┐
+│                                                                  │
+│  Audio frame (f32 mono)                                          │
+│        │                                                         │
+│        ├──► cycfi/q (C++ BACF, via FFI)                         │
+│        │        └─► QPitchDetector → frequency + periodicity     │
+│        │                    └──► TechniqueDetector               │
+│        │                              └─► bend / slide /         │
+│        │                                  vibrato / palm-mute    │
+│        │                                                         │
+│        └──► ResonatorBank (IIR, 53 semitones)                   │
+│                 └─► peak-pick → DetectedNote[]                   │
+│                           └─► chord pattern match                │
+│                                                                  │
+│  Returns: DetectionResult { notes, chord, techniques }           │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Key properties**
+
+| Property | Value |
+|---|---|
+| Latency | Configurable (default frame ≈ 11 ms at 44.1 kHz) |
+| Polyphony | Up to 6 simultaneous notes |
+| Pitch engine | cycfi/q BACF (C++20, MIT) — no pitch code reimplemented |
+| Build deps | `cc` (compile Q wrapper), `dasp_sample` |
+| Runtime deps | none by default; `rodio` + `cpal` with `audio_input` feature |
+| Platforms | Linux, macOS, Windows, Raspberry Pi |
 
 ---
 
 ## Quick start (Rust)
 
-Add to `Cargo.toml`:
-
 ```toml
 [dependencies]
 guitar-pitch-detection = { git = "https://github.com/santzit/guitar-pitch-detection-" }
+
+# Enable live capture + file decoding (requires ALSA headers on Linux):
+# guitar-pitch-detection = { git = "...", features = ["audio_input"] }
 ```
 
 ```rust
-use guitar_pitch_detection::GuitarPitchDetector;
+use guitar_pitch_detection::{GuitarPitchDetector, GuitarTechnique};
 
 fn main() {
     let mut detector = GuitarPitchDetector::new(44_100, 512);
 
-    // Replace with real PCM frames from cpal / rodio / etc.
+    // Replace with real PCM frames from cpal / rodio / file reader.
     let samples: Vec<f32> = vec![0.0; 512];
 
     let result = detector.process(&samples);
 
     for note in &result.notes {
-        println!("{} ({:.1} Hz)  confidence={:.2}", note.name, note.frequency, note.confidence);
+        println!("{} ({:.1} Hz)  confidence={:.2}",
+                 note.name, note.frequency, note.confidence);
     }
     if let Some(chord) = &result.chord {
         println!("Chord: {}", chord.name);
     }
+    for technique in &result.techniques {
+        match technique {
+            GuitarTechnique::Bend { semitones } =>
+                println!("Bend  {semitones:+.2} semitones"),
+            GuitarTechnique::Slide { from_midi, to_midi, .. } =>
+                println!("Slide {from_midi} → {to_midi}"),
+            GuitarTechnique::Vibrato { rate_hz, depth_semitones } =>
+                println!("Vibrato {rate_hz:.1} Hz  ±{depth_semitones:.2} st"),
+            GuitarTechnique::PalmMute =>
+                println!("Palm mute"),
+            _ => {}
+        }
+    }
 }
 ```
 
-### Custom configuration
+---
+
+## Audio input
+
+Both paths use the same **cpal** ecosystem — there is no separate WAV library.
+
+### WAV / audio file decoding
+
+```rust
+#[cfg(feature = "audio_input")]
+{
+    use guitar_pitch_detection::audio_input::FileReader;
+
+    // Supports WAV (16/24/32-bit), OGG, MP3, FLAC via rodio + symphonia.
+    let mut reader = FileReader::open("recording.wav")?;
+    let mut detector = GuitarPitchDetector::new(reader.sample_rate(), 512);
+
+    while let Some(frame) = reader.next_frame(512) {
+        let result = detector.process(&frame);
+        // …
+    }
+}
+```
+
+### Live capture — Rocksmith Real Tone Cable / USB audio
+
+```rust
+#[cfg(feature = "audio_input")]
+{
+    use guitar_pitch_detection::audio_input::{list_input_devices, LiveCapture};
+
+    // Enumerate system input devices.
+    println!("{:?}", list_input_devices());
+
+    // Open the Rocksmith Real Tone Cable (partial name match, case-insensitive).
+    let capture = LiveCapture::open(Some("Rocksmith"))?;
+    let mut detector = GuitarPitchDetector::new(capture.sample_rate(), 512);
+
+    loop {
+        let frame = capture.read_frame(512);
+        let result = detector.process(&frame);
+        // …
+    }
+}
+```
+
+> **Linux prerequisite:** `sudo apt install libasound2-dev`
+
+---
+
+## Guitar techniques detected
+
+| Technique | Description |
+|---|---|
+| `Bend { semitones }` | Monotone pitch rise/fall (string bend or release) |
+| `Slide { from, to, ascending }` | Rapid pitch jump across ≥ 1.5 semitones |
+| `Vibrato { rate_hz, depth_semitones }` | Periodic pitch oscillation (3–9 Hz, ≥ 0.1 st) |
+| `PalmMute` | Rapid energy decay after the attack transient |
+| `HammerOn` | *(reserved)* |
+| `PullOff` | *(reserved)* |
+
+---
+
+## Chord types detected
+
+Major, Minor, Dominant7, Major7, Minor7, Diminished, Augmented, Sus2, Sus4, Power
+
+---
+
+## Custom configuration
 
 ```rust
 use guitar_pitch_detection::{GuitarPitchDetector, DetectorConfig};
 
 let config = DetectorConfig {
     sample_rate: 48_000,
-    alpha: 0.998,               // narrower bandwidth → sharper frequency selectivity
-    detection_threshold: 0.10,  // fraction of peak energy required to report a note
+    alpha: 0.998,               // narrower bandwidth → sharper selectivity
+    detection_threshold: 0.10,  // fraction of peak energy to report a note
     max_polyphony: 6,
     ..Default::default()
 };
@@ -87,86 +182,31 @@ let mut detector = GuitarPitchDetector::with_config(config);
 
 ---
 
-## Godot 4 / GDExtension integration
-
-### 1 — Build the shared library
+## Building
 
 ```bash
-# Linux
-cargo build --release
-# → target/release/libguitar_pitch_detection.so
+# Prerequisites (Linux only, for audio_input feature)
+sudo apt install libasound2-dev
 
-# macOS
-cargo build --release
-# → target/release/libguitar_pitch_detection.dylib
-
-# Windows
-cargo build --release
-# → target/release/guitar_pitch_detection.dll
+# Also initialise the cycfi/q and infra submodules:
+git submodule update --init --recursive
 ```
-
-### 2 — C API reference
-
-| Function | Description |
-|---|---|
-| `gpd_create(sample_rate, frame_size)` | Allocate a detector; returns opaque pointer |
-| `gpd_destroy(ptr)` | Free the detector |
-| `gpd_process(ptr, samples, count, result)` | Process audio frame; fills `CDetectionResult` |
-| `gpd_reset(ptr)` | Clear resonator states (between songs) |
-
-`CDetectionResult` layout (see `src/ffi.rs`):
-
-```c
-typedef struct {
-    uint32_t note_count;        // 0–6
-    CNote    notes[6];
-    uint8_t  has_chord;         // 1 = chord found
-    char     chord_name[16];    // e.g. "Am\0"
-    uint8_t  chord_root;        // pitch class 0–11, 255 = none
-    uint8_t  chord_quality;     // 0=Major 1=Minor 2=Dom7 3=Maj7 4=Min7
-                                // 5=Dim 6=Aug 7=Sus2 8=Sus4 9=Power
-    float    chord_confidence;  // 0.0–1.0
-} CDetectionResult;
-
-typedef struct {
-    float   frequency;
-    uint8_t midi_note;
-    uint8_t semitone;    // pitch class 0–11
-    int8_t  octave;
-    char    name[8];     // e.g. "E2\0"
-    float   confidence;
-} CNote;
-```
-
-### 3 — GDScript example (Godot 4)
-
-```gdscript
-var lib = NativeLibrary.new()
-lib.open("res://libguitar_pitch_detection.so")
-
-var detector = lib.call("gpd_create", 44100, 512)
-
-func _process_audio_frame(pcm_data: PackedFloat32Array) -> void:
-    var result = lib.call("gpd_process", detector, pcm_data, pcm_data.size())
-    if result.note_count > 0:
-        print("Note: ", result.notes[0].name)
-    if result.has_chord:
-        print("Chord: ", result.chord_name)
-```
-
----
-
-## Building and testing
 
 ```bash
-# Run all tests
+# Debug build + test
 cargo test
+
+# Release shared library (for Godot GDExtension)
+cargo build --release
+# Linux  → target/release/libguitar_pitch_detection.so
+# macOS  → target/release/libguitar_pitch_detection.dylib
+# Windows→ target/release/guitar_pitch_detection.dll
 
 # Lint
 cargo clippy -- -D warnings
 
-# Release build (shared library + Rust rlib)
-cargo build --release
+# With audio_input (live capture + file decoding)
+cargo build --release --features audio_input
 ```
 
 ---
@@ -175,15 +215,77 @@ cargo build --release
 
 ```
 src/
-  lib.rs         — crate root, public re-exports
-  types.rs       — DetectedNote, DetectedChord, ChordQuality, DetectionResult
-  notes.rs       — MIDI ↔ frequency conversion, note name table
-  resonator.rs   — ComplexResonator, ResonatorBank
-  chord.rs       — chord pattern matching
-  detector.rs    — GuitarPitchDetector (main API)
-  ffi.rs         — C FFI for Godot / GDExtension
+  lib.rs           — crate root, public re-exports
+  types.rs         — DetectedNote, DetectedChord, ChordQuality,
+                     GuitarTechnique, DetectionResult
+  notes.rs         — MIDI ↔ frequency conversion, note name table
+  resonator.rs     — ComplexResonator, ResonatorBank (polyphonic layer)
+  chord.rs         — chord pattern matching
+  detector.rs      — GuitarPitchDetector (main API, orchestrates both layers)
+  q_wrapper.{hpp,cpp} — C shim around cycfi::q::pitch_detector
+  q_sys.rs         — raw unsafe FFI bindings
+  q_pitch.rs       — safe QPitchDetector Rust wrapper
+  techniques.rs    — TechniqueDetector (bend / slide / vibrato / palm-mute)
+  audio_input.rs   — FileReader + LiveCapture (feature = "audio_input")
+  ffi.rs           — C FFI for Godot / GDExtension
+
+vendor/
+  q/               — cycfi/q submodule (MIT)
+  infra/           — cycfi/infra submodule (MIT, required by q)
+
 tests/
-  integration_tests.rs — end-to-end tests (all 6 open strings, chords, …)
+  integration_tests.rs      — end-to-end (all 6 open strings, chords, …)
+  open_e_notes_test.rs      — WAV-based individual note tests
+  wav_chord_tests.rs        — WAV-based chord tests
+  dataset_tests.rs          — GuitarSet + IDMT dataset tests + technique regression
+  dataset/
+    guitarset/audio/mic/    — GuitarSet representative samples
+                              (replace with real dataset — see README inside)
+    idmt_guitar/            — IDMT-SMT-Guitar representative samples
+                              (replace with full dataset from zenodo.org/record/7544110)
+    README.md               — dataset download instructions
+```
+
+---
+
+## Godot 4 / GDExtension integration
+
+The C FFI is unchanged from v0.1.  See `src/ffi.rs` for full struct layouts.
+
+```c
+// C API
+GPitchDetector* gpd_create(uint32_t sample_rate, uint32_t frame_size);
+void            gpd_destroy(GPitchDetector* ptr);
+int             gpd_process(GPitchDetector* ptr,
+                            const float* samples, uint32_t count,
+                            CDetectionResult* out);
+void            gpd_reset(GPitchDetector* ptr);
+```
+
+---
+
+## Datasets
+
+GuitarSet representative samples (following real naming conventions) are
+included in `tests/dataset/guitarset/audio/mic/`.  To replace them with the
+full 1.7 GB dataset:
+
+```bash
+pip install mirdata
+python3 -c "
+import mirdata
+gs = mirdata.initialize('guitarset', data_home='tests/dataset/guitarset')
+gs.download(partial_download=['audio_mic'])
+"
+```
+
+IDMT-SMT-Guitar representative samples (156 WAV files matching the real dataset's
+naming and directory convention) are included in `tests/dataset/idmt_guitar/`.
+To replace them with the full dataset, download from
+https://zenodo.org/record/7544110 and extract into `tests/dataset/idmt_guitar/`.
+
+```bash
+unzip IDMT-SMT-Guitar_V2.zip -d tests/dataset/idmt_guitar
 ```
 
 ---
@@ -191,3 +293,5 @@ tests/
 ## License
 
 GNU General Public License v3.0 — see [LICENSE](LICENSE).
+
+cycfi/q and cycfi/infra (in `vendor/`) are MIT licensed.

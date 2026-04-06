@@ -74,6 +74,37 @@ pub struct DetectedChord {
     pub confidence: f32,
 }
 
+/// A guitar playing technique detected by analysing Q's continuous pitch
+/// trajectory over time.
+///
+/// The underlying pitch data always comes from **cycfi/q** via FFI; this enum
+/// only describes the *interpretation* of that pitch history.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GuitarTechnique {
+    /// String bend — pitch shifts monotonically by `semitones` (positive = up,
+    /// negative = bend release).
+    Bend { semitones: f32 },
+    /// Slide between two frets.
+    Slide {
+        from_midi: u8,
+        to_midi: u8,
+        ascending: bool,
+    },
+    /// Periodic pitch oscillation (vibrato).
+    Vibrato {
+        /// Oscillation rate in Hz (typical guitar vibrato: 4–8 Hz).
+        rate_hz: f32,
+        /// Half-amplitude of the oscillation in semitones.
+        depth_semitones: f32,
+    },
+    /// Palm-muted note — characterised by a rapid energy decay after the attack.
+    PalmMute,
+    /// Hammer-on — note onset without a pick attack (short rise-time, low energy transient).
+    HammerOn,
+    /// Pull-off — note onset by lifting a fretting finger.
+    PullOff,
+}
+
 /// The result returned by [`GuitarPitchDetector::process`].
 #[derive(Debug, Clone, Default)]
 pub struct DetectionResult {
@@ -81,4 +112,6 @@ pub struct DetectionResult {
     pub notes: Vec<DetectedNote>,
     /// Chord inferred from the detected notes, if one was recognised.
     pub chord: Option<DetectedChord>,
+    /// Guitar playing techniques detected from Q's continuous pitch history.
+    pub techniques: Vec<GuitarTechnique>,
 }
