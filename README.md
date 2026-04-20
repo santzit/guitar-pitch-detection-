@@ -1,4 +1,4 @@
-# q-rs (guitar-pitch-detection)
+# q-rs
 
 A **Rust crate** exposing cycfi/q APIs for band-pass filtering and pitch detection,
 plus real-time polyphonic guitar pitch detection.

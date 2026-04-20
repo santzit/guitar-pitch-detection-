@@ -46,6 +46,10 @@ struct QBandpassFilter {
     }
 
     void reset() {
+        // q::bandpass_csg does not currently expose a public reset() API.
+        // The delay-line state is represented by these public biquad fields.
+        // If cycfi/q changes this layout in future updates, this bridge may
+        // need adjustment.
         filter.x1 = 0.0f;
         filter.x2 = 0.0f;
         filter.y1 = 0.0f;
