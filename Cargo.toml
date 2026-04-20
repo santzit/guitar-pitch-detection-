@@ -1,8 +1,8 @@
 [package]
-name = "guitar-pitch-detection"
+name = "q-rs"
 version = "0.2.0"
 edition = "2021"
-description = "Real-time polyphonic guitar pitch detection using cycfi/q, cpal audio I/O and dasp DSP"
+description = "q-rs crate exposing cycfi/q pitch detection and band-pass APIs in Rust"
 license = "GPL-3.0"
 repository = "https://github.com/santzit/guitar-pitch-detection-"
 keywords = ["guitar", "pitch-detection", "audio", "music", "godot"]

@@ -10,6 +10,7 @@
 #include "q_wrapper.hpp"
 
 #include <q/pitch/pitch_detector.hpp>
+#include <q/fx/biquad.hpp>
 #include <q/support/frequency.hpp>
 #include <q/support/decibel.hpp>
 #include <q/support/unit.hpp>
@@ -31,6 +32,29 @@ struct QPitchDetector {
               decibel{ static_cast<double>(hysteresis_db), direct_unit }
           }
     {}
+};
+
+struct QBandpassFilter {
+    bandpass_csg filter;
+
+    QBandpassFilter(float center_freq_hz, float sample_rate, float q_factor)
+        : filter{frequency{ static_cast<double>(center_freq_hz) }, sample_rate, static_cast<double>(q_factor)}
+    {}
+
+    void config(float center_freq_hz, float sample_rate, float q_factor) {
+        filter.config(frequency{ static_cast<double>(center_freq_hz) }, sample_rate, static_cast<double>(q_factor));
+    }
+
+    void reset() {
+        // q::bandpass_csg does not currently expose a public reset() API.
+        // The delay-line state is represented by these public biquad fields.
+        // If cycfi/q changes this layout in future updates, this bridge may
+        // need adjustment.
+        filter.x1 = 0.0f;
+        filter.x2 = 0.0f;
+        filter.y1 = 0.0f;
+        filter.y2 = 0.0f;
+    }
 };
 
 /* ── C API implementation ─────────────────────────────────────────────────── */
@@ -81,6 +105,45 @@ void q_pd_reset(QPitchDetector* pd)
 {
     if (!pd) return;
     pd->detector.reset();
+}
+
+QBandpassFilter* q_bp_create(
+    float center_freq_hz,
+    float sample_rate,
+    float q_factor)
+{
+    try {
+        return new QBandpassFilter(center_freq_hz, sample_rate, q_factor);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void q_bp_destroy(QBandpassFilter* bp)
+{
+    delete bp;
+}
+
+void q_bp_config(QBandpassFilter* bp, float center_freq_hz, float sample_rate, float q_factor)
+{
+    if (!bp) return;
+    bp->config(center_freq_hz, sample_rate, q_factor);
+}
+
+float q_bp_process(QBandpassFilter* bp, float sample)
+{
+    if (!bp) return 0.0f;
+    try {
+        return bp->filter(sample);
+    } catch (...) {
+        return 0.0f;
+    }
+}
+
+void q_bp_reset(QBandpassFilter* bp)
+{
+    if (!bp) return;
+    bp->reset();
 }
 
 } /* extern "C" */

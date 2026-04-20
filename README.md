@@ -1,6 +1,7 @@
-# guitar-pitch-detection
+# q-rs
 
-A **Rust library** for real-time polyphonic guitar pitch detection.
+A **Rust crate** exposing cycfi/q APIs for band-pass filtering and pitch detection,
+plus real-time polyphonic guitar pitch detection.
 Designed to be embedded in a [Godot 4](https://godotengine.org/) rhythm game (think Rocksmith) that
 detects notes, chords, and playing techniques from live audio input.
 
@@ -56,10 +57,23 @@ detects notes, chords, and playing techniques from live audio input.
 
 ```toml
 [dependencies]
-guitar-pitch-detection = { git = "https://github.com/santzit/guitar-pitch-detection-" }
+q-rs = { git = "https://github.com/santzit/guitar-pitch-detection-" }
 
 # Enable live capture + file decoding (requires ALSA headers on Linux):
-# guitar-pitch-detection = { git = "...", features = ["audio_input"] }
+# q-rs = { git = "...", features = ["audio_input"] }
+```
+
+## Exposed Q APIs (Rust)
+
+```rust
+use guitar_pitch_detection::{QBandpassFilter, QPitchDetector};
+
+let mut bp = QBandpassFilter::new(110.0, 44_100.0, 8.0);
+let y = bp.process(0.25);
+
+let mut pd = QPitchDetector::new_guitar(44_100.0);
+let _ready = pd.process(y);
+let _freq_hz = pd.frequency();
 ```
 
 ```rust

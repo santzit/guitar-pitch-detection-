@@ -6,12 +6,15 @@ on:
   pull_request:
     branches: ["**"]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Build & Test
+  build_test_linux:
+    name: Build & Test (Linux)
     runs-on: ubuntu-latest
 
     steps:
@@ -47,5 +50,24 @@ jobs:
       - name: Lint (clippy)
         run: cargo clippy -- -D warnings
 
+      - name: Build
+        run: cargo build --verbose
+
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --verbose -- --nocapture
+
+  build_windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --verbose

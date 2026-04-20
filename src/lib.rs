@@ -35,6 +35,7 @@ pub mod chord;
 pub mod detector;
 pub mod ffi;
 pub mod notes;
+pub mod q_band;
 pub mod q_pitch;
 pub mod q_sys;
 pub mod resonator;
@@ -46,4 +47,6 @@ pub mod audio_input;
 
 // Re-export the most commonly used items at the crate root.
 pub use detector::{DetectorConfig, GuitarPitchDetector};
+pub use q_band::QBandpassFilter;
+pub use q_pitch::QPitchDetector;
 pub use types::{ChordQuality, DetectedChord, DetectedNote, DetectionResult, GuitarTechnique};
