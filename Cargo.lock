@@ -274,17 +274,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "guitar-pitch-detection"
-version = "0.2.0"
-dependencies = [
- "approx",
- "cc",
- "cpal",
- "dasp_sample",
- "rodio",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -665,6 +654,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "q-rs"
+version = "0.2.0"
+dependencies = [
+ "approx",
+ "cc",
+ "cpal",
+ "dasp_sample",
+ "rodio",
 ]
 
 [[package]]

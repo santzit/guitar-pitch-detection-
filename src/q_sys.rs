@@ -11,6 +11,12 @@ pub struct QPitchDetectorHandle {
     _private: [u8; 0],
 }
 
+/// Opaque C++ band-pass filter object.
+#[repr(C)]
+pub struct QBandpassFilterHandle {
+    _private: [u8; 0],
+}
+
 extern "C" {
     /// Create a pitch detector for the given frequency range and sample rate.
     ///
@@ -38,4 +44,28 @@ extern "C" {
 
     /// Reset internal state.
     pub fn q_pd_reset(pd: *mut QPitchDetectorHandle);
+
+    /// Create a Q constant-skirt-gain band-pass filter.
+    pub fn q_bp_create(
+        center_freq_hz: c_float,
+        sample_rate: c_float,
+        q_factor: c_float,
+    ) -> *mut QBandpassFilterHandle;
+
+    /// Free a band-pass filter. Safe to call with `null`.
+    pub fn q_bp_destroy(bp: *mut QBandpassFilterHandle);
+
+    /// Reconfigure band-pass filter center frequency / Q.
+    pub fn q_bp_config(
+        bp: *mut QBandpassFilterHandle,
+        center_freq_hz: c_float,
+        sample_rate: c_float,
+        q_factor: c_float,
+    );
+
+    /// Feed one sample through the band-pass filter.
+    pub fn q_bp_process(bp: *mut QBandpassFilterHandle, sample: c_float) -> c_float;
+
+    /// Reset band-pass filter delay buffers.
+    pub fn q_bp_reset(bp: *mut QBandpassFilterHandle);
 }
